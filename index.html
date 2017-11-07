@@ -1,0 +1,488 @@
+<html>
+<head>
+
+  <style>
+   @font-face {
+      font-family: "GeoSans";
+      src: url("assets/GeosansLight.ttf");
+    }
+    html{ color:#ffc; background:#000; font-family:"GeoSans" }
+    body{
+      font-size:30px;
+    }
+    a{
+      color: #fff;
+    }
+    #renderer{
+      position:fixed;
+      top:0px;
+      left:0px;
+    }
+    code{
+      color:#fff;
+      font-size:20px;
+    }
+  </style>
+
+</head>
+<body style="margin:0px">
+
+<script src="three.js"                        ></script>
+<script src="lib/Tween.js"                    ></script>
+<script src="lib/jquery.min.js"               ></script>
+<script src="lib/stats.min.js"                ></script>
+<script src="lib/underscore.js"               ></script>
+<script src="lib/TrackballControls.js"        ></script>
+<script src="lib/ShaderLoader.js"             ></script>
+<script src="lib/ObjectControls.js"           ></script>
+<script src="lib/MouseMoveControls.js"        ></script>
+<script src="lib/PhysicsRenderer.js"          ></script>
+
+
+<script src="lib/AudioController.js"          ></script>
+<script src="lib/Stream.js"                   ></script>
+<script src="lib/UserAudio.js"                ></script>
+
+<script src="lib/AudioBuffer.js"              ></script>
+<script src="lib/BufferedAudio.js"            ></script>
+
+<script src="lib/TextCreator.js"              ></script>
+
+
+
+<script src="Song.js"                         ></script>
+
+
+
+<script>
+
+
+  var scene , camera , renderer, clock , controls, objectControls;
+
+  var neededToLoad = 0;
+  var numLoaded = 0;
+
+  var iPoint;
+
+  var loader = new THREE.TextureLoader();
+
+
+  var shaders = new ShaderLoader( 'shaders' );
+
+  //shaders.load( 'ss-curlFront'    , 'sim'    , 'simulation' );
+
+  addLoad();
+
+  shaders.load( 'fs-trace'  , 'trace' , 'fragment' );
+  shaders.load( 'vs-trace'  , 'trace' , 'vertex'   );
+
+  shaders.shaderSetLoaded = function(){
+    onLoad();
+  }
+
+  addLoad();
+  var matcap = loader.load('img/rough-aluminium.jpg',function ( texture ) {
+    onLoad();
+  });
+
+  addLoad();
+  //var normal = THREE.ImageUtils.loadTexture('img/t_n_mesh.png');
+  var normal = loader.load('img/n_water.jpg',function(){
+    onLoad();
+  });
+   
+  normal.wrapT = normal.wrapS = THREE.RepeatWrapping;
+
+
+  var songList = [
+    "holdMe",
+    "glistenVox",
+    "lonely",
+    "growSometimes",
+    "oneonta",
+    "midnight",
+    "forPeter"
+  ];
+
+  var titleList = [
+    "Hold Me",
+    "Glisten",
+    "Lonely",
+    "Grow Sometimes",
+    "Oneonta",
+    "Midnight",
+    "For Peter"
+  ];
+
+  var songs =[];
+
+  var activeLink = undefined;
+  var hoveredLink = undefined;
+
+  var finalSongVal = 0;
+
+  var uniforms = {
+    t_audio:  { type:"t"  , value : null },
+    dT:       { type:"f"  , value : 0             },
+    time:     { type:"f"  , value : 0             },
+    lightPos: { type:"v3" , value : null          },
+    iModelMat:{ type:"m4" , value: new THREE.Matrix4() },
+    t_matcap: { type:"t", value: matcap},
+    t_normal: { type:"t", value: normal},
+    t_text:   { type:"t", value: null },
+    textRatio: {type:"f", value: 1 },
+
+    links: { type:"v4v" , value:[] },
+    activeLink: { type:"v4" , value:new THREE.Vector4() },
+    hoveredLink: { type:"v4" , value:new THREE.Vector4() },
+    songVal:{type:"f",value:0},
+
+    interfaceRadius: {type:"f", value:2 }
+  }
+
+  G = {}
+  G.v1 = new THREE.Vector3();
+  G.v2 = new THREE.Vector3();
+
+
+
+
+
+  TWEEN.origTween = TWEEN.Tween;
+  TWEEN.Tween = function (options){
+    var res = new TWEEN.origTween(options);
+    res.easing(TWEEN.Easing.Quadratic.InOut);
+    return res;
+  };
+
+
+  /*
+
+     Setting up Audio
+
+  */
+  var audio = new AudioController();
+
+  var stream = new Stream( "audio/glistenVox.mp3" , audio.ctx , audio.gain );
+
+  //var userAudio = new UserAudio( audio.ctx , audio.gain);
+
+  //audio.mute.gain.value = 0;
+  uniforms.t_audio.value = audio.texture;
+
+  var v1 = new THREE.Vector3();
+  
+  function init(){
+
+
+      textCreator =  new TextCreator( 100 );
+
+
+      test = textCreator.createTexture( "test" , {
+        size: .03
+      });
+
+      uniforms.t_text.value = test;
+
+      console.log( test );
+
+      /*
+
+         Default threejs stuff!
+
+      */
+      scene = new THREE.Scene();
+
+      var ar = window.innerWidth / window.innerHeight;
+
+      camera = new THREE.PerspectiveCamera( 40, ar , .01, 100 );
+      camera.position.z = 6;
+
+      renderer = new THREE.WebGLRenderer();
+      renderer.setSize( window.innerWidth, window.innerHeight );
+      renderer.setPixelRatio( 1 )
+
+      renderer.domElement.id = "renderer"
+      document.body.appendChild( renderer.domElement );
+
+
+      objectControls = new ObjectControls( camera );
+
+
+      controls = new THREE.TrackballControls( camera );
+
+      controls = new THREE.MouseMoveControls( camera );
+      //controls.noRotate = true;
+
+      controls.center = new THREE.Vector3( 0,.5,0);
+
+
+      stats = new Stats();
+      stats.domElement.style.position = "absolute";
+      stats.domElement.style.left = "0px";
+      stats.domElement.style.bottom = "-30px";
+      stats.domElement.style.zIndex = "999";
+      document.body.appendChild( stats.domElement );
+
+
+      window.addEventListener( 'resize', onWindowResize, false );
+
+      clock = new THREE.Clock();
+
+
+      var geo = new THREE.IcosahedronGeometry( .5 , 0 );
+      var mat = new THREE.MeshNormalMaterial();
+      for( var i = 0; i < 1000; i++ ){
+
+        var m = new THREE.Mesh( geo , mat );
+        m.position.z = (Math.random()-1) * 50;
+        m.position.x = (Math.random()-.5) * 50 * (1-m.position.z / 50);
+        m.position.y = (Math.random()-.5) * 50 * (1-m.position.z / 50);
+        
+        m.rotation.x = Math.random();
+        m.rotation.y = Math.random();
+        m.rotation.z = Math.random();
+        m.scale.multiplyScalar( 1 + Math.random() );
+        scene.add(m);
+      }
+
+      var geo = new THREE.IcosahedronGeometry( .5 , 2 );
+      var mat = new THREE.MeshNormalMaterial();
+
+      var raytraceMat = new THREE.ShaderMaterial({
+        uniforms: uniforms,
+        vertexShader: shaders.vs.trace,
+        fragmentShader: shaders.fs.trace,
+      })
+
+
+      for( var i = 0; i< songList.length; i++){
+
+       
+        var song = new Song( objectControls , i , titleList[i] , songList[i] , geo , mat );
+        var angle = -(i / songList.length) * Math.PI  * 1.15 + Math.PI / 2;
+
+
+        song.position.x =  uniforms.interfaceRadius.value  * Math.sin( angle );
+        song.position.y =  uniforms.interfaceRadius.value * Math.cos( angle );
+
+        //song.position.normalize().multiplyScalar( 1.5 + .5 * Math.random() );
+
+
+        scene.add( song.body );
+
+        songs.push( song );
+
+        uniforms.links.value.push( new THREE.Vector4() );
+
+       // var geo = new THREE.CubeGeometry( 2 , 2 , 1 );
+      
+
+        //mat = new THREE.MeshNormalMaterial();
+        var body1 = new THREE.Mesh( geo , raytraceMat );
+
+
+      }
+
+      var geo = new THREE.CubeGeometry( 60 , 60 ,3  );
+      
+
+      //mat = new THREE.MeshNormalMaterial();
+      mainBody = new THREE.Mesh( geo , raytraceMat );
+      scene.add( mainBody );
+
+
+      mouse = new THREE.Mesh( new THREE.IcosahedronGeometry( .01 , 1 ), new THREE.MeshNormalMaterial());
+
+      //scene.add( mouse );
+
+
+      var geo = new THREE.PlaneGeometry( 100000 , 100000 );
+      var mat = new THREE.MeshNormalMaterial({side: THREE.DoubleSide, opacity: 0, transparent: true});
+      intersectionPlane = new THREE.Mesh( geo , mat );
+      //intersectionPlane.visible = false;
+      //scene.add( intersectionPlane );
+
+
+      songs[0].select();
+
+
+  }
+
+  function animate(){
+
+    requestAnimationFrame( animate );
+    mainBody.updateMatrixWorld();
+
+
+    uniforms.iModelMat.value.getInverse( mainBody.matrixWorld );
+
+    for( var i = 0 ; i < songs.length; i++ ){
+
+      v1.copy( songs[i].position );
+
+      v1.applyMatrix4( uniforms.iModelMat.value );
+
+      uniforms.links.value[i].x = v1.x;
+      uniforms.links.value[i].y = v1.y;
+      uniforms.links.value[i].z = v1.z;
+
+      // TODO: set to if song hovered / played / etc
+      uniforms.links.value[i].w = songs[i].hovered;
+
+    }
+
+    uniforms.dT.value = clock.getDelta();
+    uniforms.time.value += uniforms.dT.value;
+
+    if( hoveredLink ){
+      uniforms.hoveredLink.value.x = hoveredLink.position.x;
+      uniforms.hoveredLink.value.y = hoveredLink.position.y;
+      uniforms.hoveredLink.value.z = hoveredLink.position.z;
+      uniforms.hoveredLink.value.w = 1;
+    }else{
+      uniforms.hoveredLink.value.x = 0;
+      uniforms.hoveredLink.value.y = 0;
+      uniforms.hoveredLink.value.z = 0;
+      uniforms.hoveredLink.value.w = 0;
+    }
+
+
+    // Tween our activeLink uniform to actual uniform
+    if( activeLink ){
+
+      G.v1.copy( activeLink.position );
+
+      G.v2.x = uniforms.activeLink.value.x;
+      G.v2.y = uniforms.activeLink.value.y;
+      G.v2.z = uniforms.activeLink.value.z;
+
+      G.v1.copy( G.v2 );
+
+      G.v1.sub(  activeLink.position );
+
+      G.v1.multiplyScalar( -.1 );
+
+      //G.v2.copy( activeLink.position );
+      G.v1.add( G.v2 );
+
+
+      uniforms.activeLink.value.x = G.v1.x;
+      uniforms.activeLink.value.y = G.v1.y;
+      uniforms.activeLink.value.z = G.v1.z;
+      uniforms.activeLink.value.w = 1;
+
+    }else{
+      uniforms.activeLink.value.x = 0;
+      uniforms.activeLink.value.y = 0;
+      uniforms.activeLink.value.z = 0;
+      uniforms.activeLink.value.w = 0;
+    }
+
+
+    uniforms.songVal.value = (finalSongVal - uniforms.songVal.value) * .1 +uniforms.songVal.value;
+
+
+    //intersectionPlane.lookAt( camera.position );
+
+
+
+   // iPoint = objectControls.raycaster.intersectObject( intersectionPlane );
+    //1console.log( iPoint );
+
+    //if( iPoint[0] ) mouse.position.copy( iPoint[0].point );
+
+
+
+    controls.update();
+    objectControls.update();
+
+    audio.update();
+
+    TWEEN.update();
+   
+
+    renderer.render( scene , camera );
+    stats.update();
+
+
+
+  }
+
+
+
+  function onWindowResize() {
+
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+
+    renderer.setSize( window.innerWidth, window.innerHeight );
+   // grain.play();
+
+  }
+
+  function addLoad(){
+    neededToLoad ++;
+  }
+
+  function onLoad(){
+    numLoaded ++;
+    console.log( numLoaded);
+    console.log( neededToLoad);
+    if( numLoaded == neededToLoad ){
+      init();
+      animate();
+    }
+  }
+
+
+ function switchStream( newStream  ){
+
+  var s = { v : stream.gain.gain.value } 
+  var e = { v : 0 }
+  var tween = new TWEEN.Tween( s ).to( e , 500 );
+
+  this.tweenTMP = s;
+  tween.audio = this.audio
+  tween.onUpdate(function(){
+    stream.gain.gain.value = this.tweenTMP.v;
+    console.log( this.tweenTMP.v );
+  }.bind( this));
+
+  tween.onComplete( function(){
+
+
+    console.log('ss')
+    stream.audio.src = newStream;
+
+    var t = new TWEEN.Tween({ v: 0 }).to( { v: 1 } , 500 );
+
+    t.onUpdate(function(e){
+      //console.log( e );
+      stream.gain.gain.value = e
+      //console.log( e.v );
+    }.bind( this));
+
+    t.onComplete( function(){
+
+      console.log('sss')
+
+      stream.play();
+
+    })
+
+    t.start();
+  })
+
+  tween.start();
+
+}
+
+
+</script>
+ 
+
+
+
+</body>
+<html>
